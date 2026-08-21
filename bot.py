@@ -1,5 +1,5 @@
 """
-👑 ULTIMATE PRIVATE RELAY BOT - RENDER EDITION (FINAL WORKING VERSION 6)
+👑 ULTIMATE PRIVATE RELAY BOT - RENDER EDITION (FINAL WORKING VERSION 7)
 """
 import logging
 import sqlite3
@@ -15,7 +15,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 
 # CONFIGURATION
 BOT_TOKEN = os.environ.get('BOT_TOKEN', '8806058859:AAFp6hmI5j1Oj6MH9fJCTr1PDYh9PQOyaFw')
-ADMIN_IDS = [int(os.environ.get('ADMIN_ID', '6024704351'))]
+ADMIN_IDS = [int(x) for x in os.environ.get('ADMIN_ID', '6024704351').split(',')]
 
 DB_NAME = 'relay_bot.db'
 FILES_DIR = 'received_files'
@@ -256,42 +256,68 @@ async def forward_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ Message delivered to admin.")
 
 # ──────────────────────────────────────────
-# HANDLE ADMIN MESSAGES
+# HANDLE ADMIN MESSAGES (THE FIXED VERSION)
 # ──────────────────────────────────────────
 async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
+    
+    # If admin replies to a forwarded message
     if message.reply_to_message:
         forwarded_msg = message.reply_to_message
+        
         target_user_id = None
         if forwarded_msg.forward_from:
             target_user_id = forwarded_msg.forward_from.id
         elif forwarded_msg.forward_from_chat:
             target_user_id = forwarded_msg.forward_from_chat.id
+        
         if target_user_id is None:
-            rows = db_execute('SELECT user_id FROM users ORDER BY last_active DESC LIMIT 1')
-            if rows:
-                target_user_id = rows[0][0]
+            # Check if the replied message is our admin notification
+            # If so, look at the text for the user ID
+            if forwarded_msg.text:
+                # Format: "📨 New Message from ... ID: 123456789"
+                import re
+                match = re.search(r'ID: (\d+)', forwarded_msg.text)
+                if match:
+                    target_user_id = int(match.group(1))
+        
         if target_user_id is None:
-            await message.reply_text("❌ Could not identify the user.")
+            await message.reply_text("❌ Could not identify the user. Please use /reply <user_id> <message>")
             return
+        
         target_chat_id = db_get_one('SELECT chat_id FROM users WHERE user_id = ?', (target_user_id,))
         if not target_chat_id:
-            await message.reply_text("❌ User not found.")
+            await message.reply_text("❌ User not found in database.")
             return
+        
         target_chat_id = target_chat_id[0]
+        
         try:
-            await context.bot.forward_message(
-                chat_id=target_chat_id,
-                from_chat_id=message.chat.id,
-                message_id=message.message_id
-            )
+            # Send the admin's reply to the user
+            if message.photo:
+                await context.bot.send_photo(chat_id=target_chat_id, photo=message.photo[-1].file_id, caption=message.caption)
+            elif message.video:
+                await context.bot.send_video(chat_id=target_chat_id, video=message.video.file_id, caption=message.caption)
+            elif message.document:
+                await context.bot.send_document(chat_id=target_chat_id, document=message.document.file_id, caption=message.caption)
+            elif message.voice:
+                await context.bot.send_voice(chat_id=target_chat_id, voice=message.voice.file_id)
+            elif message.sticker:
+                await context.bot.send_sticker(chat_id=target_chat_id, sticker=message.sticker.file_id)
+            else:
+                await context.bot.send_message(chat_id=target_chat_id, text=message.text or "Reply from admin")
+            
             await message.reply_text("✅ Reply sent to user.")
         except Exception as e:
             await message.reply_text(f"❌ Failed to send reply: {e}")
         return
+    
+    # If admin types a command
     if message.text and message.text.startswith('/'):
         await handle_admin_command(update, context)
         return
+    
+    # If admin sends a message without replying
     await message.reply_text("To reply to a user, reply to their forwarded message.")
 
 # ──────────────────────────────────────────
@@ -301,12 +327,16 @@ async def handle_admin_command(update: Update, context: ContextTypes.DEFAULT_TYP
     message = update.message
     text = message.text
     command = text.split()[0].lower()
+    
     if command == '/help':
-        await message.reply_text("Admin commands: /stats, /users, /broadcast, /block, /unblock, /delete, /messages, /addreply, /export")
+        await message.reply_text("Admin commands:\n/stats - Show stats\n/users - List users\n/broadcast <msg> - Send to all\n/block <id> - Block user\n/unblock <id> - Unblock user\n/delete <id> - Delete user\n/messages <id> - View messages\n/export - Export data")
+    
     elif command == '/stats':
         total_users = db_get_one('SELECT COUNT(*) FROM users')[0]
         total_messages = db_get_one('SELECT COUNT(*) FROM messages')[0]
-        await message.reply_text(f"📊 Total Users: {total_users}\n💬 Total Messages: {total_messages}")
+        blocked_users = db_get_one('SELECT COUNT(*) FROM users WHERE is_blocked = 1')[0]
+        await message.reply_text(f"📊 Total Users: {total_users}\n💬 Total Messages: {total_messages}\n🚫 Blocked: {blocked_users}")
+    
     elif command == '/users':
         users = get_all_users()
         if not users:
@@ -317,19 +347,77 @@ async def handle_admin_command(update: Update, context: ContextTypes.DEFAULT_TYP
             status = "🚫" if is_blocked else "✅"
             user_list += f"{status} {first_name} (@{username}) - {uid}\n"
         await message.reply_text(user_list)
+    
+    elif command == '/broadcast':
+        if len(context.args) < 1:
+            await message.reply_text("Usage: /broadcast <message>")
+            return
+        broadcast_text = ' '.join(context.args)
+        users = get_all_users()
+        sent_count = 0
+        for uid, chat_id, first_name, username, is_blocked in users:
+            if is_blocked:
+                continue
+            try:
+                await context.bot.send_message(chat_id=chat_id, text=f"📢 **Broadcast:**\n\n{broadcast_text}")
+                sent_count += 1
+            except Exception as e:
+                logger.error(f"Failed to send to {uid}: {e}")
+        await message.reply_text(f"✅ Broadcast sent to {sent_count} users.")
+    
+    elif command == '/block':
+        if len(context.args) < 1:
+            await message.reply_text("Usage: /block <user_id>")
+            return
+        target_id = int(context.args[0])
+        set_block_status(target_id, True)
+        await message.reply_text(f"✅ User {target_id} blocked.")
+    
+    elif command == '/unblock':
+        if len(context.args) < 1:
+            await message.reply_text("Usage: /unblock <user_id>")
+            return
+        target_id = int(context.args[0])
+        set_block_status(target_id, False)
+        await message.reply_text(f"✅ User {target_id} unblocked.")
+    
+    elif command == '/delete':
+        if len(context.args) < 1:
+            await message.reply_text("Usage: /delete <user_id>")
+            return
+        target_id = int(context.args[0])
+        db_execute('DELETE FROM users WHERE user_id = ?', (target_id,))
+        await message.reply_text(f"✅ User {target_id} deleted.")
+    
+    elif command == '/messages':
+        if len(context.args) < 1:
+            await message.reply_text("Usage: /messages <user_id>")
+            return
+        target_id = int(context.args[0])
+        messages = get_user_messages(target_id, limit=20)
+        if not messages:
+            await message.reply_text("No messages found for this user.")
+            return
+        msg_list = f"📜 **Recent Messages from User {target_id}:**\n\n"
+        for msg_type, content, file_path, timestamp in messages:
+            msg_list += f"**{msg_type}** ({timestamp}): {content}\n"
+        await message.reply_text(msg_list)
+    
     else:
         await message.reply_text("Unknown command. Use /help.")
 
 # ──────────────────────────────────────────
-# CALLBACK BUTTONS
+# CALLBACK BUTTONS (FIXED VERSION)
 # ──────────────────────────────────────────
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    
     if query.data == 'stats':
         total_users = db_get_one('SELECT COUNT(*) FROM users')[0]
         total_messages = db_get_one('SELECT COUNT(*) FROM messages')[0]
         await query.edit_message_text(f"📊 Total Users: {total_users}\n💬 Total Messages: {total_messages}")
+    
     elif query.data == 'users':
         users = get_all_users()
         if not users:
@@ -340,6 +428,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             status = "🚫" if is_blocked else "✅"
             user_list += f"{status} {first_name} (@{username}) - {uid}\n"
         await query.edit_message_text(user_list)
+    
+    elif query.data == 'broadcast':
+        await query.edit_message_text("Use /broadcast <message> to send a message to all users.")
+    
+    elif query.data == 'settings':
+        await query.edit_message_text("Settings: Use /block, /unblock, /delete commands.")
+    
+    elif query.data == 'files':
+        await query.edit_message_text("Files feature coming soon.")
 
 # ──────────────────────────────────────────
 # FLASK WEB SERVER
