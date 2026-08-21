@@ -1,5 +1,5 @@
 """
-👑 ULTIMATE PRIVATE RELAY BOT - RENDER EDITION (FINAL WORKING VERSION)
+👑 ULTIMATE PRIVATE RELAY BOT - RENDER EDITION (FINAL WORKING VERSION 6)
 """
 import logging
 import sqlite3
@@ -30,7 +30,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# ──────────────────────────────────────────
 # DATABASE SETUP
+# ──────────────────────────────────────────
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
@@ -101,7 +103,9 @@ def is_blocked(user_id):
     row = db_get_one('SELECT is_blocked FROM users WHERE user_id = ?', (user_id,))
     return row and row[0] == 1
 
+# ──────────────────────────────────────────
 # ANTI-SPAM
+# ──────────────────────────────────────────
 user_message_times = {}
 
 def check_spam(user_id):
@@ -114,7 +118,9 @@ def check_spam(user_id):
     user_message_times[user_id].append(now)
     return True
 
+# ──────────────────────────────────────────
 # AUTO-REPLY
+# ──────────────────────────────────────────
 def get_auto_reply(message_text):
     templates = db_execute('SELECT keyword, response FROM auto_replies')
     for keyword, response in templates:
@@ -125,7 +131,9 @@ def get_auto_reply(message_text):
 def add_auto_reply(keyword, response):
     db_execute('INSERT OR REPLACE INTO auto_replies (keyword, response) VALUES (?, ?)', (keyword, response))
 
+# ──────────────────────────────────────────
 # START COMMAND
+# ──────────────────────────────────────────
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat_id = update.effective_chat.id
@@ -153,7 +161,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "You can send me any type of message. All messages are private."
         )
 
+# ──────────────────────────────────────────
 # HANDLE ALL MESSAGES
+# ──────────────────────────────────────────
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat_id = update.effective_chat.id
@@ -177,7 +187,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
     await forward_to_admin(update, context)
 
+# ──────────────────────────────────────────
 # FORWARD TO ADMIN
+# ──────────────────────────────────────────
 async def forward_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat_id = update.effective_chat.id
@@ -243,7 +255,9 @@ async def forward_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text("✅ Message delivered to admin.")
 
+# ──────────────────────────────────────────
 # HANDLE ADMIN MESSAGES
+# ──────────────────────────────────────────
 async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
     if message.reply_to_message:
@@ -280,7 +294,9 @@ async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     await message.reply_text("To reply to a user, reply to their forwarded message.")
 
+# ──────────────────────────────────────────
 # ADMIN COMMANDS
+# ──────────────────────────────────────────
 async def handle_admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
     text = message.text
@@ -304,7 +320,9 @@ async def handle_admin_command(update: Update, context: ContextTypes.DEFAULT_TYP
     else:
         await message.reply_text("Unknown command. Use /help.")
 
+# ──────────────────────────────────────────
 # CALLBACK BUTTONS
+# ──────────────────────────────────────────
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -323,7 +341,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_list += f"{status} {first_name} (@{username}) - {uid}\n"
         await query.edit_message_text(user_list)
 
+# ──────────────────────────────────────────
 # FLASK WEB SERVER
+# ──────────────────────────────────────────
 app = Flask(__name__)
 
 @app.route('/')
@@ -338,24 +358,23 @@ def start_polling():
         telegram_app.add_handler(MessageHandler(filters.ALL, handle_message))
         telegram_app.add_handler(CallbackQueryHandler(button_handler))
         
-        # ✅ Properly await run_polling
         await telegram_app.initialize()
         await telegram_app.start()
         await telegram_app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
         
-        # Keep the bot running
         await asyncio.Event().wait()
     
-    # Run the async function in a new event loop
     asyncio.run(run_bot())
 
-# START POLLING AT MODULE LOAD
+# ⚠️ INIT DATABASE AT MODULE LOAD (THIS IS THE FIX!)
+init_db()
+
+# ⚠️ START POLLING AT MODULE LOAD (THIS IS THE FIX!)
 polling_thread = Thread(target=start_polling)
 polling_thread.daemon = True
 polling_thread.start()
 
 # RUN FLASK
 if __name__ == '__main__':
-    init_db()
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
