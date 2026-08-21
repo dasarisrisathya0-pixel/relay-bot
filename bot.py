@@ -1,5 +1,5 @@
 """
-👑 ULTIMATE PRIVATE RELAY BOT - RENDER EDITION (FINAL WORKING VERSION 8)
+👑 ULTIMATE PRIVATE RELAY BOT - RENDER EDITION (FINAL WORKING VERSION 9)
 """
 import logging
 import sqlite3
@@ -7,6 +7,7 @@ import os
 import time
 import json
 import asyncio
+import re
 from datetime import datetime
 from flask import Flask
 from threading import Thread
@@ -30,7 +31,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# DATABASE
+# DATABASE SETUP
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
@@ -87,11 +88,12 @@ def is_blocked(user_id):
     row = db_get_one('SELECT is_blocked FROM users WHERE user_id = ?', (user_id,))
     return row and row[0] == 1
 
-# START
+# START COMMAND
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat_id = update.effective_chat.id
     save_user(user.id, chat_id, user.first_name, user.username)
+    
     if user.id in ADMIN_IDS:
         keyboard = [
             [InlineKeyboardButton("📊 Stats", callback_data='stats')],
@@ -99,22 +101,32 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("📢 Broadcast", callback_data='broadcast')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text(f"👑 Welcome back, Admin {user.first_name}!", reply_markup=reply_markup)
+        await update.message.reply_text(
+            f"👑 Welcome back, Admin {user.first_name}!\n\nBot is running.",
+            reply_markup=reply_markup
+        )
     else:
-        await update.message.reply_text("👋 Hello! Send me any message. It will reach the admin.")
+        await update.message.reply_text(
+            "👋 Hello! Welcome to the Private Relay Bot.\n\n"
+            "You can send me any type of message. All messages are private."
+        )
 
-# HANDLE MESSAGES
+# HANDLE ALL MESSAGES
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat_id = update.effective_chat.id
     message = update.message
+    
     save_user(user.id, chat_id, user.first_name, user.username)
+    
     if is_blocked(user.id):
-        await update.message.reply_text("⛔ You are blocked.")
+        await update.message.reply_text("⛔ You are blocked from using this bot.")
         return
+    
     if user.id in ADMIN_IDS:
         await handle_admin_message(update, context)
         return
+    
     await forward_to_admin(update, context)
 
 # FORWARD TO ADMIN
@@ -143,35 +155,66 @@ async def forward_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     save_message(user.id, chat_id, message_type, content)
     
-    admin_text = f"📨 {user.first_name} (@{user.username}) - ID: {user.id}\n📝 Type: {message_type}\n🕐 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n{content}"
+    admin_text = (
+        f"📨 New Message from {user.first_name} (@{user.username})\n"
+        f"🆔 ID: {user.id}\n"
+        f"📝 Type: {message_type}\n"
+        f"🕐 Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+        f"{content}"
+    )
     
     for admin_id in ADMIN_IDS:
         try:
             await context.bot.send_message(chat_id=admin_id, text=admin_text)
-            await context.bot.forward_message(chat_id=admin_id, from_chat_id=chat_id, message_id=message.message_id)
+            await context.bot.forward_message(
+                chat_id=admin_id,
+                from_chat_id=chat_id,
+                message_id=message.message_id
+            )
         except Exception as e:
-            logger.error(f"Failed: {e}")
+            logger.error(f"Failed to send to admin {admin_id}: {e}")
     
-    await update.message.reply_text("✅ Message sent to admin.")
+    await update.message.reply_text("✅ Message delivered to admin.")
 
-# HANDLE ADMIN MESSAGES (THE FIX)
+# HANDLE ADMIN MESSAGES (FIXED)
 async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.message
     
-    # If admin replies to a forwarded message
+    # If admin uses /reply command
+    if message.text and message.text.startswith('/reply'):
+        parts = message.text.split()
+        if len(parts) < 3:
+            await message.reply_text("Usage: /reply <user_id> <message>")
+            return
+        
+        target_id = int(parts[1])
+        reply_text = ' '.join(parts[2:])
+        
+        target_chat_id = db_get_one('SELECT chat_id FROM users WHERE user_id = ?', (target_id,))
+        if not target_chat_id:
+            await message.reply_text("❌ User not found in database.")
+            return
+        
+        try:
+            await context.bot.send_message(chat_id=target_chat_id[0], text=reply_text)
+            await message.reply_text("✅ Reply sent to user.")
+        except Exception as e:
+            await message.reply_text(f"❌ Failed: {e}")
+        return
+    
+    # If admin replies to a forwarded message (using reply button)
     if message.reply_to_message:
         forwarded_msg = message.reply_to_message
         target_user_id = None
         
-        # Try to find user ID from the forwarded message
-        if forwarded_msg.forward_from:
+        # Check if the replied message is a forwarded message
+        if hasattr(forwarded_msg, 'forward_from') and forwarded_msg.forward_from:
             target_user_id = forwarded_msg.forward_from.id
-        elif forwarded_msg.forward_from_chat:
+        elif hasattr(forwarded_msg, 'forward_from_chat') and forwarded_msg.forward_from_chat:
             target_user_id = forwarded_msg.forward_from_chat.id
         
-        # If not found, look for "ID: xxxx" in the admin notification text
+        # If still not found, look for "ID: xxxx" in the text
         if target_user_id is None and forwarded_msg.text:
-            import re
             match = re.search(r'ID: (\d+)', forwarded_msg.text)
             if match:
                 target_user_id = int(match.group(1))
@@ -180,7 +223,6 @@ async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYP
             await message.reply_text("❌ Could not find user ID. Use /reply <user_id> <message>")
             return
         
-        # Get the user's chat ID
         target_chat_id = db_get_one('SELECT chat_id FROM users WHERE user_id = ?', (target_user_id,))
         if not target_chat_id:
             await message.reply_text("❌ User not found in database.")
@@ -196,11 +238,12 @@ async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYP
             await message.reply_text(f"❌ Failed: {e}")
         return
     
-    # If admin types a command
+    # If admin types a regular command
     if message.text and message.text.startswith('/'):
         await handle_admin_command(update, context)
         return
     
+    # If admin sends a message without replying
     await message.reply_text("To reply to a user, reply to their forwarded message.")
 
 # ADMIN COMMANDS
@@ -210,11 +253,12 @@ async def handle_admin_command(update: Update, context: ContextTypes.DEFAULT_TYP
     command = text.split()[0].lower()
     
     if command == '/help':
-        await message.reply_text("Commands: /stats, /users, /broadcast, /block, /unblock, /delete, /reply")
+        await message.reply_text("Commands:\n/stats - Show stats\n/users - List users\n/broadcast <msg> - Send to all\n/reply <user_id> <msg> - Reply to user\n/block <id> - Block user\n/unblock <id> - Unblock user")
     
     elif command == '/stats':
         total_users = db_get_one('SELECT COUNT(*) FROM users')[0]
-        await message.reply_text(f"📊 Total Users: {total_users}")
+        total_messages = db_get_one('SELECT COUNT(*) FROM messages')[0]
+        await message.reply_text(f"📊 Total Users: {total_users}\n💬 Total Messages: {total_messages}")
     
     elif command == '/users':
         users = get_all_users()
@@ -266,9 +310,12 @@ async def handle_admin_command(update: Update, context: ContextTypes.DEFAULT_TYP
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    
     if query.data == 'stats':
         total_users = db_get_one('SELECT COUNT(*) FROM users')[0]
-        await query.edit_message_text(f"📊 Total Users: {total_users}")
+        total_messages = db_get_one('SELECT COUNT(*) FROM messages')[0]
+        await query.edit_message_text(f"📊 Total Users: {total_users}\n💬 Total Messages: {total_messages}")
+    
     elif query.data == 'users':
         users = get_all_users()
         if not users:
@@ -278,6 +325,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for uid, chat_id, first_name, username, is_blocked in users[:10]:
             user_list += f"✅ {first_name} (@{username}) - {uid}\n"
         await query.edit_message_text(user_list)
+    
     elif query.data == 'broadcast':
         await query.edit_message_text("Use /broadcast <message> to send to all users.")
 
@@ -294,17 +342,24 @@ def start_polling():
         telegram_app.add_handler(CommandHandler('start', start))
         telegram_app.add_handler(MessageHandler(filters.ALL, handle_message))
         telegram_app.add_handler(CallbackQueryHandler(button_handler))
+        
         await telegram_app.initialize()
         await telegram_app.start()
         await telegram_app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+        
         await asyncio.Event().wait()
+    
     asyncio.run(run_bot())
 
+# INIT DATABASE AT MODULE LOAD
 init_db()
+
+# START POLLING AT MODULE LOAD
 polling_thread = Thread(target=start_polling)
 polling_thread.daemon = True
 polling_thread.start()
 
+# RUN FLASK
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
