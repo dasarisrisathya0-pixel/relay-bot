@@ -1,5 +1,5 @@
 """
-👑 ULTIMATE PRIVATE RELAY BOT — DEPLOYED ON RENDER (FIXED VERSION)
+👑 ULTIMATE PRIVATE RELAY BOT - RENDER EDITION (WORKING)
 """
 import logging
 import sqlite3
@@ -173,7 +173,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(
             "👋 Hello! Welcome to the Private Relay Bot.\n\n"
-            "You can send me any type of message — text, photos, videos, files, audio, voice, location, contacts, etc.\n"
+            "You can send me any type of message - text, photos, videos, files, audio, voice, location, contacts, etc.\n"
             "All your messages are completely private and only visible to the admin.\n\n"
             "You will receive replies directly from the admin.\n"
             "Thank you!"
@@ -381,7 +381,7 @@ async def handle_admin_command(update: Update, context: ContextTypes.DEFAULT_TYP
         user_list = "📋 **Registered Users:**\n\n"
         for uid, chat_id, first_name, username, is_blocked in users:
             status = "🚫" if is_blocked else "✅"
-            user_list += f"{status} **{first_name}** (@{username}) — ID: {uid}\n"
+            user_list += f"{status} **{first_name}** (@{username}) - ID: {uid}\n"
         await message.reply_text(user_list, parse_mode='Markdown')
     
     elif command == '/broadcast':
@@ -465,16 +465,16 @@ async def handle_admin_command(update: Update, context: ContextTypes.DEFAULT_TYP
     elif command == '/help':
         help_text = (
             "🛠️ **Admin Commands:**\n\n"
-            "/stats — Show bot statistics\n"
-            "/users — List all users\n"
-            "/broadcast <msg> — Send message to all users\n"
-            "/block <user_id> — Block a user\n"
-            "/unblock <user_id> — Unblock a user\n"
-            "/delete <user_id> — Delete a user from database\n"
-            "/messages <user_id> — View user's message history\n"
-            "/addreply <keyword> <response> — Add auto-reply template\n"
-            "/export — Export all data to JSON file\n"
-            "/help — Show this help menu"
+            "/stats - Show bot statistics\n"
+            "/users - List all users\n"
+            "/broadcast <msg> - Send message to all users\n"
+            "/block <user_id> - Block a user\n"
+            "/unblock <user_id> - Unblock a user\n"
+            "/delete <user_id> - Delete a user from database\n"
+            "/messages <user_id> - View user's message history\n"
+            "/addreply <keyword> <response> - Add auto-reply template\n"
+            "/export - Export all data to JSON file\n"
+            "/help - Show this help menu"
         )
         await message.reply_text(help_text, parse_mode='Markdown')
     
@@ -501,7 +501,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_list = "📋 Users:\n"
         for uid, chat_id, first_name, username, is_blocked in users[:10]:
             status = "🚫" if is_blocked else "✅"
-            user_list += f"{status} {first_name} (@{username}) — {uid}\n"
+            user_list += f"{status} {first_name} (@{username}) - {uid}\n"
         await query.edit_message_text(user_list)
     
     elif query.data == 'broadcast':
@@ -527,25 +527,21 @@ app = Flask(__name__)
 def home():
     return "🤖 Bot is running! 24/7 on Render. ✅"
 
+# ⚠️ THIS IS THE KEY FIX - START POLLING IMMEDIATELY (NOT INSIDE __main__)
 def start_polling():
-    global telegram_app
     telegram_app = Application.builder().token(BOT_TOKEN).build()
     telegram_app.add_handler(CommandHandler('start', start))
     telegram_app.add_handler(MessageHandler(filters.ALL, handle_message))
     telegram_app.add_handler(CallbackQueryHandler(button_handler))
     telegram_app.run_polling(allowed_updates=Update.ALL_TYPES)
 
-# ──────────────────────────────────────────
-# MAIN
-# ──────────────────────────────────────────
+# Start polling in a background thread at module load time
+polling_thread = Thread(target=start_polling)
+polling_thread.daemon = True
+polling_thread.start()
+
+# Run Flask web server (Render uses gunicorn bot:app)
 if __name__ == '__main__':
     init_db()
-    
-    # Start bot polling in background thread
-    polling_thread = Thread(target=start_polling)
-    polling_thread.daemon = True
-    polling_thread.start()
-    
-    # Start Flask web server
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
