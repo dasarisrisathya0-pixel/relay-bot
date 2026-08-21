@@ -1,11 +1,12 @@
 """
-👑 ULTIMATE PRIVATE RELAY BOT - RENDER EDITION (WORKING v3)
+👑 ULTIMATE PRIVATE RELAY BOT - RENDER EDITION (FINAL WORKING VERSION)
 """
 import logging
 import sqlite3
 import os
 import time
 import json
+import asyncio
 from datetime import datetime
 from flask import Flask
 from threading import Thread
@@ -329,14 +330,26 @@ app = Flask(__name__)
 def home():
     return "🤖 Bot is running!"
 
+# ⚠️ FIXED start_polling function - uses asyncio
 def start_polling():
-    telegram_app = Application.builder().token(BOT_TOKEN).build()
-    telegram_app.add_handler(CommandHandler('start', start))
-    telegram_app.add_handler(MessageHandler(filters.ALL, handle_message))
-    telegram_app.add_handler(CallbackQueryHandler(button_handler))
-    telegram_app.run_polling(allowed_updates=Update.ALL_TYPES)
+    async def run_bot():
+        telegram_app = Application.builder().token(BOT_TOKEN).build()
+        telegram_app.add_handler(CommandHandler('start', start))
+        telegram_app.add_handler(MessageHandler(filters.ALL, handle_message))
+        telegram_app.add_handler(CallbackQueryHandler(button_handler))
+        
+        # ✅ Properly await run_polling
+        await telegram_app.initialize()
+        await telegram_app.start()
+        await telegram_app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+        
+        # Keep the bot running
+        await asyncio.Event().wait()
+    
+    # Run the async function in a new event loop
+    asyncio.run(run_bot())
 
-# START POLLING AT MODULE LOAD (KEY FIX)
+# START POLLING AT MODULE LOAD
 polling_thread = Thread(target=start_polling)
 polling_thread.daemon = True
 polling_thread.start()
