@@ -1,5 +1,5 @@
 """
-👑 ULTIMATE PRIVATE RELAY BOT — DEPLOYED ON RENDER
+👑 ULTIMATE PRIVATE RELAY BOT — DEPLOYED ON RENDER (FIXED VERSION)
 """
 import logging
 import sqlite3
@@ -522,19 +522,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # FLASK WEB SERVER (FOR RENDER)
 # ──────────────────────────────────────────
 app = Flask(__name__)
-telegram_app = None
 
 @app.route('/')
 def home():
     return "🤖 Bot is running! 24/7 on Render. ✅"
-
-@app.route(f'/webhook/{BOT_TOKEN}', methods=['POST'])
-def webhook():
-    global telegram_app
-    if telegram_app:
-        update = Update.de_json(request.get_json(force=True), telegram_app.bot)
-        telegram_app.update_queue.put(update)
-    return 'OK'
 
 def start_polling():
     global telegram_app
@@ -547,7 +538,7 @@ def start_polling():
 # ──────────────────────────────────────────
 # MAIN
 # ──────────────────────────────────────────
-def main():
+if __name__ == '__main__':
     init_db()
     
     # Start bot polling in background thread
@@ -558,6 +549,3 @@ def main():
     # Start Flask web server
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
-
-if __name__ == '__main__':
-    main()
