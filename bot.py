@@ -1,5 +1,5 @@
 """
-👑 ULTIMATE PRIVATE RELAY BOT - ULTIMATE FORWARD VERSION
+👑 ULTIMATE PRIVATE RELAY BOT - RENDER EDITION (FINAL AUTO-ADD VERSION)
 """
 import logging
 import sqlite3
@@ -88,9 +88,7 @@ def is_blocked(user_id):
     row = db_get_one('SELECT is_blocked FROM users WHERE user_id = ?', (user_id,))
     return row and row[0] == 1
 
-# ──────────────────────────────────────────
 # GLOBAL VARIABLE FOR FORWARDING
-# ──────────────────────────────────────────
 forwarding_mode = False
 
 # START COMMAND
@@ -123,6 +121,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     message = update.message
     
+    # ✅ THIS AUTOMATICALLY ADDS ANY USER WHO MESSAGES THE BOT
     save_user(user.id, chat_id, user.first_name, user.username)
     
     if is_blocked(user.id):
@@ -130,7 +129,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     if user.id in ADMIN_IDS:
-        # If admin is in forwarding mode, send the current message to all users
         if forwarding_mode:
             await broadcast_media(update, context)
             return
@@ -199,7 +197,6 @@ async def broadcast_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if is_blocked:
                 continue
             try:
-                # Forward the exact message (text, photo, video, file, etc.)
                 await context.bot.forward_message(
                     chat_id=chat_id,
                     from_chat_id=message.chat.id,
@@ -210,7 +207,7 @@ async def broadcast_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.error(f"Failed to forward to {uid}: {e}")
         
         await message.reply_text(f"✅ Message forwarded to {sent} users.")
-        forwarding_mode = False  # Turn off forwarding mode
+        forwarding_mode = False
     except Exception as e:
         await message.reply_text(f"❌ Failed: {e}")
         forwarding_mode = False
@@ -220,7 +217,6 @@ async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYP
     global forwarding_mode
     message = update.message
     
-    # If admin uses /reply command
     if message.text and message.text.startswith('/reply'):
         parts = message.text.split()
         if len(parts) < 3:
@@ -242,7 +238,6 @@ async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYP
             await message.reply_text(f"❌ Failed: {e}")
         return
     
-    # If admin replies to a forwarded message
     if message.reply_to_message:
         forwarded_msg = message.reply_to_message
         target_user_id = None
@@ -287,7 +282,6 @@ async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYP
             await message.reply_text(f"❌ Failed: {e}")
         return
     
-    # If admin types a regular command
     if message.text and message.text.startswith('/'):
         await handle_admin_command(update, context)
         return
@@ -358,6 +352,30 @@ async def handle_admin_command(update: Update, context: ContextTypes.DEFAULT_TYP
             await message.reply_text("✅ Reply sent.")
         except Exception as e:
             await message.reply_text(f"❌ Failed: {e}")
+    
+    elif command == '/block':
+        if len(context.args) < 1:
+            await message.reply_text("Usage: /block <user_id>")
+            return
+        target_id = int(context.args[0])
+        db_execute('UPDATE users SET is_blocked = 1 WHERE user_id = ?', (target_id,))
+        await message.reply_text(f"✅ User {target_id} blocked.")
+    
+    elif command == '/unblock':
+        if len(context.args) < 1:
+            await message.reply_text("Usage: /unblock <user_id>")
+            return
+        target_id = int(context.args[0])
+        db_execute('UPDATE users SET is_blocked = 0 WHERE user_id = ?', (target_id,))
+        await message.reply_text(f"✅ User {target_id} unblocked.")
+    
+    elif command == '/delete':
+        if len(context.args) < 1:
+            await message.reply_text("Usage: /delete <user_id>")
+            return
+        target_id = int(context.args[0])
+        db_execute('DELETE FROM users WHERE user_id = ?', (target_id,))
+        await message.reply_text(f"✅ User {target_id} deleted.")
     
     else:
         await message.reply_text("Unknown command. Use /help.")
