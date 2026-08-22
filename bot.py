@@ -1,5 +1,5 @@
 """
-👑 ULTIMATE PRIVATE RELAY BOT - RENDER EDITION (FINAL WORKING VERSION 9)
+👑 ULTIMATE PRIVATE RELAY BOT - ULTIMATE FORWARD VERSION
 """
 import logging
 import sqlite3
@@ -88,6 +88,11 @@ def is_blocked(user_id):
     row = db_get_one('SELECT is_blocked FROM users WHERE user_id = ?', (user_id,))
     return row and row[0] == 1
 
+# ──────────────────────────────────────────
+# GLOBAL VARIABLE FOR FORWARDING
+# ──────────────────────────────────────────
+forwarding_mode = False
+
 # START COMMAND
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -113,6 +118,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # HANDLE ALL MESSAGES
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global forwarding_mode
     user = update.effective_user
     chat_id = update.effective_chat.id
     message = update.message
@@ -124,6 +130,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     if user.id in ADMIN_IDS:
+        # If admin is in forwarding mode, send the current message to all users
+        if forwarding_mode:
+            await broadcast_media(update, context)
+            return
+        
         await handle_admin_message(update, context)
         return
     
@@ -176,8 +187,37 @@ async def forward_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text("✅ Message delivered to admin.")
 
-# HANDLE ADMIN MESSAGES (FIXED)
+# BROADCAST MEDIA (FORWARDING TO ALL)
+async def broadcast_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global forwarding_mode
+    message = update.message
+    users = get_all_users()
+    sent = 0
+    
+    try:
+        for uid, chat_id, first_name, username, is_blocked in users:
+            if is_blocked:
+                continue
+            try:
+                # Forward the exact message (text, photo, video, file, etc.)
+                await context.bot.forward_message(
+                    chat_id=chat_id,
+                    from_chat_id=message.chat.id,
+                    message_id=message.message_id
+                )
+                sent += 1
+            except Exception as e:
+                logger.error(f"Failed to forward to {uid}: {e}")
+        
+        await message.reply_text(f"✅ Message forwarded to {sent} users.")
+        forwarding_mode = False  # Turn off forwarding mode
+    except Exception as e:
+        await message.reply_text(f"❌ Failed: {e}")
+        forwarding_mode = False
+
+# HANDLE ADMIN MESSAGES
 async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global forwarding_mode
     message = update.message
     
     # If admin uses /reply command
@@ -202,18 +242,16 @@ async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYP
             await message.reply_text(f"❌ Failed: {e}")
         return
     
-    # If admin replies to a forwarded message (using reply button)
+    # If admin replies to a forwarded message
     if message.reply_to_message:
         forwarded_msg = message.reply_to_message
         target_user_id = None
         
-        # Check if the replied message is a forwarded message
         if hasattr(forwarded_msg, 'forward_from') and forwarded_msg.forward_from:
             target_user_id = forwarded_msg.forward_from.id
         elif hasattr(forwarded_msg, 'forward_from_chat') and forwarded_msg.forward_from_chat:
             target_user_id = forwarded_msg.forward_from_chat.id
         
-        # If still not found, look for "ID: xxxx" in the text
         if target_user_id is None and forwarded_msg.text:
             match = re.search(r'ID: (\d+)', forwarded_msg.text)
             if match:
@@ -231,8 +269,19 @@ async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYP
         target_chat_id = target_chat_id[0]
         
         try:
-            # Send admin's reply to the user
-            await context.bot.send_message(chat_id=target_chat_id, text=message.text or "Reply from admin")
+            if message.photo:
+                await context.bot.send_photo(chat_id=target_chat_id, photo=message.photo[-1].file_id, caption=message.caption)
+            elif message.video:
+                await context.bot.send_video(chat_id=target_chat_id, video=message.video.file_id, caption=message.caption)
+            elif message.document:
+                await context.bot.send_document(chat_id=target_chat_id, document=message.document.file_id, caption=message.caption)
+            elif message.voice:
+                await context.bot.send_voice(chat_id=target_chat_id, voice=message.voice.file_id)
+            elif message.sticker:
+                await context.bot.send_sticker(chat_id=target_chat_id, sticker=message.sticker.file_id)
+            else:
+                await context.bot.send_message(chat_id=target_chat_id, text=message.text or "Reply from admin")
+            
             await message.reply_text("✅ Reply sent to user.")
         except Exception as e:
             await message.reply_text(f"❌ Failed: {e}")
@@ -243,17 +292,17 @@ async def handle_admin_message(update: Update, context: ContextTypes.DEFAULT_TYP
         await handle_admin_command(update, context)
         return
     
-    # If admin sends a message without replying
     await message.reply_text("To reply to a user, reply to their forwarded message.")
 
 # ADMIN COMMANDS
 async def handle_admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global forwarding_mode
     message = update.message
     text = message.text
     command = text.split()[0].lower()
     
     if command == '/help':
-        await message.reply_text("Commands:\n/stats - Show stats\n/users - List users\n/broadcast <msg> - Send to all\n/reply <user_id> <msg> - Reply to user\n/block <id> - Block user\n/unblock <id> - Unblock user")
+        await message.reply_text("Commands:\n/stats - Show stats\n/users - List users\n/broadcast <msg> - Send text to all\n/forward - Forward the next message to all\n/reply <user_id> <msg> - Reply to user\n/block <id> - Block user\n/unblock <id> - Unblock user")
     
     elif command == '/stats':
         total_users = db_get_one('SELECT COUNT(*) FROM users')[0]
@@ -271,6 +320,29 @@ async def handle_admin_command(update: Update, context: ContextTypes.DEFAULT_TYP
             user_list += f"{status} {first_name} (@{username}) - {uid}\n"
         await message.reply_text(user_list)
     
+    elif command == '/broadcast':
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2:
+            await message.reply_text("Usage: /broadcast <message>")
+            return
+        
+        broadcast_text = parts[1]
+        users = get_all_users()
+        sent = 0
+        for uid, chat_id, first_name, username, is_blocked in users:
+            if not is_blocked:
+                try:
+                    await context.bot.send_message(chat_id=chat_id, text=f"📢 {broadcast_text}")
+                    sent += 1
+                except Exception as e:
+                    logger.error(f"Failed to send to {uid}: {e}")
+        
+        await message.reply_text(f"✅ Sent to {sent} users.")
+    
+    elif command == '/forward':
+        forwarding_mode = True
+        await message.reply_text("📤 Forward mode ACTIVATED! Now send ANY message (text, photo, video, file) and it will be forwarded to ALL users.")
+    
     elif command == '/reply':
         if len(context.args) < 2:
             await message.reply_text("Usage: /reply <user_id> <message>")
@@ -286,22 +358,6 @@ async def handle_admin_command(update: Update, context: ContextTypes.DEFAULT_TYP
             await message.reply_text("✅ Reply sent.")
         except Exception as e:
             await message.reply_text(f"❌ Failed: {e}")
-    
-    elif command == '/broadcast':
-        if len(context.args) < 1:
-            await message.reply_text("Usage: /broadcast <message>")
-            return
-        broadcast_text = ' '.join(context.args)
-        users = get_all_users()
-        sent = 0
-        for uid, chat_id, first_name, username, is_blocked in users:
-            if not is_blocked:
-                try:
-                    await context.bot.send_message(chat_id=chat_id, text=f"📢 {broadcast_text}")
-                    sent += 1
-                except:
-                    pass
-        await message.reply_text(f"✅ Sent to {sent} users.")
     
     else:
         await message.reply_text("Unknown command. Use /help.")
@@ -327,7 +383,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(user_list)
     
     elif query.data == 'broadcast':
-        await query.edit_message_text("Use /broadcast <message> to send to all users.")
+        await query.edit_message_text("Use /broadcast <message> for text. Use /forward to send any media to all users.")
 
 # FLASK WEB SERVER
 app = Flask(__name__)
